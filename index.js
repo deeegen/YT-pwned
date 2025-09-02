@@ -1,11 +1,17 @@
+"use strict";
+
 const express = require("express");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const ytsr = require("ytsr");
+const https = require("https");
+const { pipeline } = require("stream");
+const { promisify } = require("util");
+const pipelineAsync = promisify(pipeline);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 const VIDEO_DIR = path.join(__dirname, "videos");
 const VIEW_DIR = path.join(__dirname, "views");
@@ -26,6 +32,162 @@ app.use((req, res, next) => {
 });
 
 app.use("/videos", express.static(VIDEO_DIR));
+
+// ---------- Configuration for yt-dlp handling ----------
+const LOCAL_YTDLP_NAME = path.join(__dirname, "yt-dlp"); // where we'll keep a local copy
+let YTDLP_BIN = "yt-dlp"; // default command name; we'll override if needed
+
+/**
+ * Try to run a command to check availability (simple --version check)
+ * resolves true if command runs and exits with code 0
+ */
+function checkCommandWorks(command, args = ["--version"], env = process.env) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn(command, args, {
+        stdio: ["ignore", "ignore", "ignore"],
+        env,
+      });
+      proc.on("error", () => resolve(false));
+      proc.on("close", (code) => resolve(code === 0));
+    } catch {
+      return resolve(false);
+    }
+  });
+}
+
+/**
+ * Download yt-dlp binary to dest (streamed).
+ * Returns when complete and executable bit is set.
+ */
+async function downloadYtDlpTo(dest) {
+  const url =
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": "node/yt-dlp-downloader",
+          Accept: "application/octet-stream",
+        },
+      },
+      (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          // Follow redirect
+          https.get(res.headers.location, (r2) => {
+            if (r2.statusCode !== 200) {
+              return reject(
+                new Error(`Unexpected status ${r2.statusCode} while fetching yt-dlp`)
+              );
+            }
+            pipelineAsync(r2, fs.createWriteStream(dest))
+              .then(() => {
+                fs.chmodSync(dest, 0o755);
+                resolve();
+              })
+              .catch(reject);
+          }).on("error", reject);
+          return;
+        }
+
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Unexpected status ${res.statusCode} while fetching yt-dlp`));
+        }
+
+        pipelineAsync(res, fs.createWriteStream(dest))
+          .then(() => {
+            try {
+              fs.chmodSync(dest, 0o755);
+            } catch (err) {
+              // chmod failed — log but continue
+              console.warn("Could not chmod yt-dlp:", err);
+            }
+            resolve();
+          })
+          .catch(reject);
+      }
+    );
+
+    req.on("error", reject);
+  });
+}
+
+/**
+ * Ensure we have a usable yt-dlp binary.
+ * Strategy:
+ * 1. If `yt-dlp --version` works (global), use that.
+ * 2. Else if local ./yt-dlp exists and is executable, use that.
+ * 3. Else attempt to download ./yt-dlp and chmod it, then use it.
+ * 4. If download fails, fall back to calling 'yt-dlp' (will error later).
+ */
+async function ensureYtDlpAvailable() {
+  // Make sure our app dir is in PATH for child processes so 'yt-dlp' will be found if placed here.
+  process.env.PATH = `${__dirname}${path.delimiter}${process.env.PATH}`;
+
+  // 1) Global yt-dlp?
+  const globalOk = await checkCommandWorks("yt-dlp");
+  if (globalOk) {
+    YTDLP_BIN = "yt-dlp";
+    console.log("Using global yt-dlp available in PATH.");
+    return;
+  }
+
+  // 2) Local binary exists?
+  try {
+    if (fs.existsSync(LOCAL_YTDLP_NAME)) {
+      // ensure executable
+      try {
+        fs.chmodSync(LOCAL_YTDLP_NAME, 0o755);
+      } catch (err) {
+        // ignore chmod errors but warn
+        console.warn("Warning: could not chmod local yt-dlp:", err.message || err);
+      }
+
+      // test local
+      const localOk = await checkCommandWorks(LOCAL_YTDLP_NAME, ["--version"], {
+        ...process.env,
+        PATH: `${__dirname}${path.delimiter}${process.env.PATH}`,
+      });
+      if (localOk) {
+        YTDLP_BIN = LOCAL_YTDLP_NAME;
+        console.log("Using existing local yt-dlp at", LOCAL_YTDLP_NAME);
+        return;
+      } else {
+        console.log("Local yt-dlp exists but failed to run; will attempt re-download.");
+      }
+    }
+  } catch (err) {
+    console.warn("Checking local yt-dlp failed:", err);
+  }
+
+  // 3) Download a local copy
+  console.log("Downloading yt-dlp to local directory...");
+  try {
+    await downloadYtDlpTo(LOCAL_YTDLP_NAME);
+    // Test it
+    const ok = await checkCommandWorks(LOCAL_YTDLP_NAME, ["--version"], {
+      ...process.env,
+      PATH: `${__dirname}${path.delimiter}${process.env.PATH}`,
+    });
+    if (ok) {
+      YTDLP_BIN = LOCAL_YTDLP_NAME;
+      console.log("Successfully downloaded yt-dlp to", LOCAL_YTDLP_NAME);
+      return;
+    } else {
+      console.warn("Downloaded yt-dlp but it failed to run.");
+    }
+  } catch (err) {
+    console.warn("Failed to download yt-dlp:", err.message || err);
+  }
+
+  // 4) Fallback
+  YTDLP_BIN = "yt-dlp";
+  console.warn(
+    "yt-dlp is not available. Attempts to use a local binary failed — commands that call yt-dlp will likely error."
+  );
+}
 
 // ---------- Simple LRU cache with TTL ----------
 class LRUCache {
@@ -100,19 +262,45 @@ async function processYtQueue() {
 }
 
 // ---------- Helper to run yt-dlp ----------
+/**
+ * runYtDlp(args, { cwd }):
+ * - uses configured YTDLP_BIN
+ * - ensures child inherits PATH that contains __dirname so local binary will be found by name
+ */
 function runYtDlp(args, { cwd } = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", args, {
-      cwd,
+    const env = {
+      ...process.env,
+      PATH: `${__dirname}${path.delimiter}${process.env.PATH}`,
+    };
+
+    const proc = spawn(YTDLP_BIN, args, {
+      cwd: cwd || process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
+      env,
     });
+
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (d) => (stdout += d.toString()));
     proc.stderr.on("data", (d) => (stderr += d.toString()));
+    proc.on("error", (err) => {
+      // More informative error if binary not found or permission denied
+      reject(
+        new Error(
+          `Failed to spawn yt-dlp (${YTDLP_BIN}): ${err.message}. ` +
+            `Ensure yt-dlp is present in PATH or available at ${LOCAL_YTDLP_NAME}.`
+        )
+      );
+    });
     proc.on("close", (code) => {
       if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`yt-dlp exited with code ${code}\n${stderr}`));
+      else
+        reject(
+          new Error(
+            `yt-dlp exited with code ${code}\n${stderr || "No stderr output"}`
+          )
+        );
     });
   });
 }
@@ -188,8 +376,6 @@ async function searchYouTube(q, limit) {
   const task = async () => {
     try {
       // If the query is a raw video id, keep the existing yt-dlp metadata path
-      // (yt-dlp gives the precise JSON metadata for a single video). This preserves
-      // exact behavior for watch-by-id while using ytsr for normal text searches.
       if (YT_VIDEO_ID_RE.test(norm)) {
         const url = `https://www.youtube.com/watch?v=${norm}`;
         const { stdout } = await runYtDlp(["-j", "--skip-download", url]);
@@ -216,14 +402,11 @@ async function searchYouTube(q, limit) {
       }
 
       // --- Use ytsr for text searches ---
-      // request a few more items from ytsr because the results may include non-video items
       const fetchLimit = Math.max(limit * 2, 12);
       const searchResults = await ytsr(norm, { limit: fetchLimit });
 
       const items = (searchResults.items || [])
         .filter((it) => {
-          // ytsr returns heterogeneous items (video, playlist, channel, ad, etc.)
-          // keep only items that look like videos.
           return (
             it &&
             (it.type === "video" ||
@@ -233,7 +416,6 @@ async function searchYouTube(q, limit) {
         })
         .slice(0, limit)
         .map((it) => {
-          // Normalize properties from various ytsr forks
           const id =
             it.id ||
             (it.url &&
@@ -252,7 +434,6 @@ async function searchYouTube(q, limit) {
           const duration =
             parseDurationString(duration_string) ??
             (typeof it.duration === "number" ? it.duration : null);
-          // try multiple thumbnail fields
           const thumbnail =
             (it.bestThumbnail && it.bestThumbnail.url) ||
             (it.thumbnails && it.thumbnails[0] && it.thumbnails[0].url) ||
@@ -275,7 +456,6 @@ async function searchYouTube(q, limit) {
 
       return items;
     } catch (err) {
-      // Bubble error up to the API route which logs and returns 500
       throw err;
     }
   };
@@ -376,7 +556,7 @@ app.post("/watch", async (req, res) => {
     await runYtDlp(args);
     return res.redirect(`/viewer/${encodeURIComponent(filename)}`);
   } catch (err) {
-    console.error(err);
+    console.error("Error running yt-dlp:", err);
     return res.status(500).send("Error downloading video.");
   }
 });
@@ -446,6 +626,16 @@ app.get("/library", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// ---------- Startup: ensure yt-dlp then listen ----------
+(async () => {
+  try {
+    await ensureYtDlpAvailable();
+  } catch (err) {
+    console.warn("ensureYtDlpAvailable threw an error:", err);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Using yt-dlp binary: ${YTDLP_BIN}`);
+  });
+})();
