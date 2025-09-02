@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Search</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      body { margin: 0; padding: 1.25rem; background: #0b1020; color: #e7eaf6; }
+      .wrap { max-width: 1100px; margin: 0 auto; }
+      header { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+      h1 { font-size: 1.3rem; margin: .3rem 0; }
+      form.search { display: flex; gap: .5rem; margin: .25rem 0 1rem 0; width: 100%; }
+      input, button, select { font-size: 1rem; border-radius: 10px; border: none; padding: .7rem .9rem; }
+      input[type="text"] { flex: 1; background: #0e1430; color: #e7eaf6; outline: 1px solid #2a3566; }
+      button { background: #5b82ff; color: white; cursor: pointer; }
+      button:hover { filter: brightness(1.07); }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+      .card { background: #131a33; border-radius: 12px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,.35); display:flex; flex-direction:column; }
+      .thumb { aspect-ratio: 16/9; background: #0f1530; display: grid; place-items: center; }
+      .thumb img { width: 100%; height: 100%; object-fit: cover; display:block; }
+      .meta { padding: .75rem; display:flex; flex-direction: column; gap: .35rem; }
+      .title { font-weight: 600; line-height: 1.3; }
+      .subtle { color:#aeb8e6; font-size: .9rem; }
+      .row { display:flex; gap:.5rem; align-items:center; justify-content: space-between; margin-top: .5rem; }
+      .cta { display:flex; gap:.5rem; }
+      a.linkish { color: #9ec1ff; text-decoration: none; }
+      a.linkish:hover { text-decoration: underline; }
+      .section { margin-top: 1rem; }
+      .empty { color:#aeb8e6; padding: .5rem 0 1rem; }
+      .badge { display:inline-block; font-size:.75rem; background:#0e1430; border:1px solid #2a3566; color:#aeb8e6; padding:.2rem .5rem; border-radius: 999px; }
+      .back { color:#9ec1ff; text-decoration:none; margin-right:.5rem; }
+      .spinner { width: 1rem; height: 1rem; border-radius: 50%; border: 2px solid rgba(255,255,255,0.12); border-top-color: #9ec1ff; animation: spin 1s linear infinite; display:inline-block; vertical-align: middle; margin-left: .5rem; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .small-muted { font-size: .85rem; color:#aeb8e6; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <a class="back" href="/">&larr; Home</a>
+        <h1>Search Videos</h1>
+      </header>
+
+      <form id="search-form" class="search" action="/search" method="GET" novalidate>
+        <input id="q-input" type="text" name="q" value="<%= q || '' %>" placeholder="Search videos..." required aria-label="Search query" />
+        <select id="source-select" name="source" aria-label="Source">
+          <option value="all" <%= (source === 'all' ? 'selected' : '') %>>All sources</option>
+          <option value="youtube" <%= (source === 'youtube' ? 'selected' : '') %>>YouTube only</option>
+          <option value="local" <%= (source === 'local' ? 'selected' : '') %>>Local only</option>
+        </select>
+        <select id="limit-select" name="limit" aria-label="Limit">
+          <% [6,12,18,24,30].forEach(function(n) { %>
+            <option value="<%= n %>" <%= (String(limit) === String(n) ? 'selected' : '') %>><%= n %></option>
+          <% }) %>
+        </select>
+        <button id="search-button" type="submit">Search</button>
+      </form>
+
+      <% if (typeof error !== 'undefined' && error) { %>
+        <div style="color:#ff9e9e; background:#3b0f17; border:1px solid #6f1a26; padding:.6rem .8rem; border-radius:10px; margin:.6rem 0 1rem;">
+          <%= error %>
+        </div>
+      <% } %>
+
+      <% if (source !== 'local') { %>
+        <div class="section" id="yt-section">
+          <h2 style="font-size:1.1rem;">
+            YouTube Results
+            <span class="badge" id="yt-count"><%= ytResults.length %></span>
+            <span id="yt-spinner" style="display:none;" aria-hidden="true" title="Searching"><span class="spinner"></span></span>
+          </h2>
+
+          <div id="yt-empty" class="empty" style="<%= (ytResults && ytResults.length ? 'display:none;' : '') %>">
+            No YouTube results yet. Try a different query.
+          </div>
+
+          <div id="yt-grid" class="grid" aria-live="polite">
+            <% ytResults.forEach(function(v) { %>
+              <div class="card">
+                <div class="thumb">
+                  <% if (v.thumbnail) { %>
+                    <img src="<%= v.thumbnail %>" alt="Thumbnail" loading="lazy" />
+                  <% } else { %>
+                    <div style="color:#6c78b6;">No thumbnail</div>
+                  <% } %>
+                </div>
+                <div class="meta">
+                  <div class="title"><%= v.title %></div>
+                  <div class="subtle"><%= v.uploader || '' %></div>
+                  <div class="row">
+                    <div class="subtle"><%= v.duration_string || (v.duration ? (Math.floor(v.duration/60)+':'+String(v.duration%60).padStart(2,'0')) : '') %></div>
+                    <div class="cta">
+                      <a class="linkish" href="<%= v.url %>" target="_blank" rel="noopener">Open on YouTube</a>
+                      <form action="/watch" method="POST" style="margin:0;">
+                        <input type="hidden" name="slug" value="<%= v.id %>" />
+                        <button type="submit">Watch here</button>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            <% }) %>
+          </div>
+        </div>
+      <% } %>
+
+      <% if (source !== 'youtube') { %>
+        <div class="section" id="local-section">
+          <h2 style="font-size:1.1rem;">Local Results <span class="badge"><%= localResults.length %></span></h2>
+          <% if (!localResults.length) { %>
+            <div class="empty">No local matches found.</div>
+          <% } else { %>
+            <div class="grid">
+            <% localResults.forEach(function(v) { %>
+              <div class="card">
+                <div class="thumb">
+                  <% if (v.thumbLocal) { %>
+                    <img src="<%= v.thumbLocal %>" alt="Thumbnail" loading="lazy" />
+                  <% } else if (v.thumbRemote) { %>
+                    <img src="<%= v.thumbRemote %>" alt="Thumbnail" loading="lazy" />
+                  <% } else { %>
+                    <div style="color:#6c78b6;">No thumbnail</div>
+                  <% } %>
+                </div>
+                <div class="meta">
+                  <div class="title"><%= v.title %></div>
+                  <div class="subtle"><%= v.uploader || '' %></div>
+                  <div class="row">
+                    <div class="subtle"><%= v.duration ? (Math.floor(v.duration/60)+':'+String(v.duration%60).padStart(2,'0')) : '' %></div>
+                    <div class="cta">
+                      <a class="linkish" href="/viewer/<%= encodeURIComponent(v.file) %>">Open</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            <% }) %>
+            </div>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+
+    <script>
+      (function () {
+        const form = document.getElementById('search-form');
+        const qInput = document.getElementById('q-input');
+        const sourceSelect = document.getElementById('source-select');
+        const limitSelect = document.getElementById('limit-select');
+        const searchButton = document.getElementById('search-button');
+
+        const ytGrid = document.getElementById('yt-grid');
+        const ytEmpty = document.getElementById('yt-empty');
+        const ytCount = document.getElementById('yt-count');
+        const ytSpinner = document.getElementById('yt-spinner');
+
+        let controller = null;
+        let debounceTimer = null;
+        const DEBOUNCE_MS = 300;
+
+        function showSpinner(show) {
+          if (!ytSpinner) return;
+          ytSpinner.style.display = show ? 'inline-block' : 'none';
+        }
+
+        function safeUrl(url) {
+          if (!url) return '';
+          try {
+            const u = new URL(url, location.href);
+            if (u.protocol === 'http:' || u.protocol === 'https:' || u.origin === location.origin) return u.href;
+            return '';
+          } catch (e) {
+            return '';
+          }
+        }
+
+        function clearYtResults() {
+          if (ytGrid) ytGrid.innerHTML = '';
+          if (ytCount) ytCount.textContent = '0';
+          if (ytEmpty) ytEmpty.style.display = 'block';
+        }
+
+        function renderYouTube(results) {
+          if (!ytGrid) return;
+          ytGrid.innerHTML = '';
+          if (!results || results.length === 0) {
+            if (ytEmpty) ytEmpty.style.display = 'block';
+            if (ytCount) ytCount.textContent = '0';
+            return;
+          }
+          if (ytEmpty) ytEmpty.style.display = 'none';
+          if (ytCount) ytCount.textContent = String(results.length);
+
+          results.forEach(function(v) {
+            const card = document.createElement('div');
+            card.className = 'card';
+
+            const thumb = document.createElement('div');
+            thumb.className = 'thumb';
+            if (v.thumbnail && /^https?:\/\//i.test(v.thumbnail)) {
+              const img = document.createElement('img');
+              img.loading = 'lazy';
+              img.alt = 'Thumbnail';
+              img.src = v.thumbnail;
+              thumb.appendChild(img);
+            } else {
+              const no = document.createElement('div');
+              no.style.color = '#6c78b6';
+              no.textContent = 'No thumbnail';
+              thumb.appendChild(no);
+            }
+            card.appendChild(thumb);
+
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+
+            const title = document.createElement('div');
+            title.className = 'title';
+            title.textContent = v.title || '';
+            meta.appendChild(title);
+
+            const uploader = document.createElement('div');
+            uploader.className = 'subtle';
+            uploader.textContent = v.uploader || '';
+            meta.appendChild(uploader);
+
+            const row = document.createElement('div');
+            row.className = 'row';
+
+            const dur = document.createElement('div');
+            dur.className = 'subtle';
+            const ds = v.duration_string || (v.duration ? (Math.floor(v.duration/60) + ':' + String(v.duration % 60).padStart(2, '0')) : '');
+            dur.textContent = ds;
+            row.appendChild(dur);
+
+            const cta = document.createElement('div');
+            cta.className = 'cta';
+
+            const open = document.createElement('a');
+            open.className = 'linkish';
+            open.href = safeUrl(v.url || `https://www.youtube.com/watch?v=${v.id}`);
+            open.target = '_blank';
+            open.rel = 'noopener';
+            open.textContent = 'Open on YouTube';
+            cta.appendChild(open);
+
+            const watchForm = document.createElement('form');
+            watchForm.action = '/watch';
+            watchForm.method = 'POST';
+            watchForm.style.margin = '0';
+
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'slug';
+            input.value = v.id || '';
+            watchForm.appendChild(input);
+
+            const btn = document.createElement('button');
+            btn.type = 'submit';
+            btn.textContent = 'Watch here';
+            watchForm.appendChild(btn);
+
+            cta.appendChild(watchForm);
+            row.appendChild(cta);
+            meta.appendChild(row);
+
+            card.appendChild(meta);
+            ytGrid.appendChild(card);
+          });
+        }
+
+        async function doYtSearchNow(q, limit) {
+          if (!q || q.trim().length === 0) {
+            clearYtResults();
+            return;
+          }
+          const source = sourceSelect.value;
+          if (source === 'local') return;
+
+          if (controller) {
+            try { controller.abort(); } catch (e) {}
+            controller = null;
+          }
+          controller = new AbortController();
+          showSpinner(true);
+
+          try {
+            const url = `/api/ytsearch?q=${encodeURIComponent(q.trim())}&limit=${encodeURIComponent(limit)}`;
+            const resp = await fetch(url, { signal: controller.signal, headers: { 'Accept': 'application/json' } });
+            if (!resp.ok) {
+              throw new Error('search failed');
+            }
+            const data = await resp.json();
+            renderYouTube(data.results || []);
+          } catch (err) {
+            if (err && err.name === 'AbortError') {
+              return;
+            }
+            console.error('yt search error', err);
+          } finally {
+            showSpinner(false);
+          }
+        }
+
+        function debounceYtSearch() {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            doYtSearchNow(qInput.value, limitSelect.value);
+          }, DEBOUNCE_MS);
+        }
+
+        if (qInput) {
+          qInput.addEventListener('input', () => {
+            debounceYtSearch();
+          });
+        }
+        if (limitSelect) limitSelect.addEventListener('change', () => debounceYtSearch());
+        if (sourceSelect) sourceSelect.addEventListener('change', () => debounceYtSearch());
+
+        form.addEventListener('submit', (ev) => {
+          ev.preventDefault();
+          doYtSearchNow(qInput.value, limitSelect.value);
+        });
+
+        (function init() {
+          const initialQ = "<%- (q || '').replace(/\"/g, '&quot;') %>";
+          try {
+            if (initialQ && initialQ.trim().length > 0 && sourceSelect.value !== 'local') {
+              doYtSearchNow(initialQ, limitSelect.value);
+            }
+          } catch (e) {}
+        })();
+      })();
+    </script>
+  </body>
+</html>
