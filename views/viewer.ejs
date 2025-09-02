@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title><%= details.title %> • Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Arial;
+      }
+      body {
+        margin: 0;
+        padding: 1.25rem;
+        background: #0b1020;
+        color: #e7eaf6;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      a.back {
+        color: #9ec1ff;
+        text-decoration: none;
+      }
+      a.back:hover {
+        text-decoration: underline;
+      }
+      .hero {
+        margin-top: 0.75rem;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+      }
+      @media (min-width: 960px) {
+        .hero {
+          grid-template-columns: 3fr 2fr;
+        }
+      }
+      .panel {
+        background: #131a33;
+        border-radius: 12px;
+        padding: 0.75rem;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      }
+      video {
+        width: 100%;
+        height: auto;
+        border-radius: 10px;
+        display: block;
+        background: #000;
+      }
+      .meta {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+      }
+      .thumb {
+        width: 160px;
+        aspect-ratio: 16/9;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #0f1530;
+      }
+      .thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .title {
+        font-weight: 700;
+        font-size: 1.2rem;
+        margin-bottom: 0.2rem;
+      }
+      .subtle {
+        color: #aeb8e6;
+        font-size: 0.95rem;
+      }
+      .cta {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.6rem;
+      }
+      button {
+        background: #5b82ff;
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        padding: 0.6rem 0.9rem;
+        cursor: pointer;
+      }
+      button:hover {
+        filter: brightness(1.07);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <a
+          class="back"
+          href="/search?q=<%= encodeURIComponent(details.title || '') %>"
+          >&larr; Back to results</a
+        >
+        <a class="back" href="/">&larr; Home</a>
+      </header>
+
+      <div class="hero">
+        <div class="panel">
+          <video controls autoplay>
+            <source src="/videos/<%= file %>" type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
+          <div class="cta">
+            <button onclick="closeViewer()">Close (delete in 3 min)</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="meta">
+            <% if (details.thumb) { %>
+            <div class="thumb">
+              <img src="<%= details.thumb %>" alt="Thumbnail" />
+            </div>
+            <% } %>
+            <div>
+              <div class="title"><%= details.title %></div>
+              <div class="subtle">
+                <%= details.uploader ? ('By ' + details.uploader) : '' %> <% if
+                (details.id) { %>
+                <div>ID: <code><%= details.id %></code></div>
+                <% } %> <% if (details.duration) { %>
+                <div>
+                  Duration: <%= Math.floor(details.duration/60) %>:<%=
+                  String(details.duration%60).padStart(2,'0') %>
+                </div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 0.75rem">
+            <form
+              action="/search"
+              method="GET"
+              style="display: flex; gap: 0.5rem"
+            >
+              <input type="hidden" name="source" value="youtube" />
+              <input
+                type="text"
+                name="q"
+                value="<%= details.title %>"
+                aria-label="Search YouTube for similar videos"
+                placeholder="Search YouTube for similar videos"
+                style="
+                  flex: 1;
+                  background: #0e1430;
+                  color: #e7eaf6;
+                  outline: 1px solid #2a3566;
+                  border-radius: 10px;
+                  padding: 0.6rem 0.9rem;
+                  border: none;
+                "
+              />
+              <button type="submit">Search Similar</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <form id="closeForm" action="/close" method="POST" style="display: none">
+      <input type="hidden" name="file" value="<%= file %>" />
+    </form>
+
+    <script>
+      function closeViewer() {
+        fetch("/close", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "file=" + encodeURIComponent("<%= file %>"),
+        }).then(() => {
+          window.location.href = "/";
+        });
+      }
+      // Trigger cleanup if user closes tab/window
+      window.addEventListener("beforeunload", function () {
+        navigator.sendBeacon(
+          "/close",
+          new URLSearchParams({ file: "<%= file %>" })
+        );
+      });
+    </script>
+  </body>
+</html>
