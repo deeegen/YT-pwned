@@ -1,0 +1,19 @@
+{
+  "name": "YT-pwned",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --watch index.js"
+  },
+  "keywords": [],
+  "author": "deeegen",
+  "license": "MIT",
+  "dependencies": {
+    "child_process": "^1.0.2",
+    "ejs": "^3.1.10",
+    "express": "^5.1.0",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7",
+    "ytsr": "^3.8.4"
+  }
+}
