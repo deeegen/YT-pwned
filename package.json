@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node --watch index.js"
+    "start": "node --watch index.js",
+    "build": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod a+rx ./yt-dlp && mv ./yt-dlp /usr/local/bin/yt-dlp || echo 'Falling back to local yt-dlp'"
   },
   "keywords": [],
   "author": "deeegen",
